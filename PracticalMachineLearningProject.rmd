@@ -1,0 +1,218 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Pete Schnettler"
+date: "March 10, 2016"
+output: html_document
+---
+
+
+========================================================
+
+## Abstract: 
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+This project is using data from Human Activity Recognition (HAR) (see link above). The aim was to train a model based on the data of various sensor values, which could later be used to predict the Classe variable, that is the manner in which the participants of HAR did the exercise. The goal of this project is to predict the manner of performing unilateral dumbbell biceps curls based on data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. The study was looking for the following five ways (Classes):
+*
+* (Class A) Done correctly
+* (Class B) throwing the elbows to the front 
+* (Class C) lifting the dumbbell only halfway 
+* (Class D) lowering the dumbbell only halfway 
+* (Class E) throwing the hips to the front 
+
+#### Load Training and Test Data
+````{r, eval=FALSE}
+library(caret)
+
+trainFileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+trainingData <- read.csv(trainFileUrl, header=TRUE, as.is = TRUE, stringsAsFactors = FALSE, sep=',', na.strings=c('NA','','#DIV/0!'))
+
+testFileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+testData <- read.csv(testFileUrl, header=TRUE, as.is = TRUE, stringsAsFactors = FALSE, sep=',', na.strings=c('NA','','#DIV/0!'))
+
+#Set the classe to a factor
+trainingData$classe <- as.factor(trainingData$classe)
+````
+
+
+#### Cleaning variables
+Looking at the training data, the first 8 columns are metadata and will not be used in our model and therefore removed from both the training and test dataframes. (The test dataframe had 7 columns of metadata.) 
+After looking at the data using summary and head commands, there are lot of values set to NA or empty variables for the prediction. In addition, columns can be removed so that what is left is the accelerometers values of belt, arm, dumbbell, and forearm. So, the non-accelerometer measures can be removed from the dataframes.
+
+````{r, eval=FALSE}
+trainingData[1:8] <- list(NULL)
+testData[1:7] <- list(NULL)
+
+isNA <- sapply(trainingData, function (x) any(is.na(x) | x == ""))
+isPredictor <- !isNA & grepl("belt|[^(fore)]arm|dumbbell|forearm", names(isNA))
+
+# Clean the training data
+predNames <- names(isNA)[isPredictor]
+dfNames <- c("classe", predNames)
+trainingData <- trainingData[, dfNames]
+
+isNA <- sapply(testData, function (x) any(is.na(x) | x == ""))
+isPredictor <- !isNA & grepl("belt|[^(fore)]arm|dumbbell|forearm", names(isNA))
+
+#Clean the test data
+predNames <- names(isNA)[isPredictor]
+testData <- testData[, predNames]
+````
+
+#### Preprocessing variables
+Preprocessing will include centering and scaling the numeric columns to reduce any skewed values and to use "K Nearest Neighbors" for zero values.  We will use the results of the preProcess function on both the training and test sets.
+````{r, eval=FALSE}
+
+nums <- which(lapply(trainingData, class) %in% "numeric")
+
+preObj <-preProcess(trainingData[,nums],method=c('knnImpute', 'center', 'scale'))
+trainPred <- predict(preObj, trainingData[,nums])
+trainPred$classe <- trainingData$classe
+
+testPred <-predict(preObj,testData[,nums])
+
+nzv <- nearZeroVar(trainPred,saveMetrics=TRUE)
+trainPred <- trainPred[,nzv$nzv==FALSE]
+
+nzv <- nearZeroVar(testPred,saveMetrics=TRUE)
+testPred <- testPred[,nzv$nzv==FALSE]
+````
+
+#### Create cross validation set
+The training set is divided in two parts, one for training and the other for cross validation testing
+
+````{r, eval=FALSE}
+set.seed(334455)
+
+inTrain = createDataPartition(trainPred$classe, p = 0.7, list=FALSE)
+training = trainPred[inTrain,]
+testing = trainPred[-inTrain,]
+````
+
+#### Model comparison and selection
+As this is a classification problem, two classification algorithms will be run and compared, Random Forest and Gradient Boost. Kappa will be used to compare the algothims with the best result.  The Kappa statistic compares an Observed Accuracy with an Expected Accuracy (random chance). The kappa statistic is used not only to evaluate a single classifier, but also to evaluate classifiers amongst themselves.  Cross validation with 5 folds is used as train control method to help reduce overfitting.  From the Kappa comparison below, Random Forest has both a higher score for Kappa as well as Accuracy.
+
+````{r, eval=FALSE}
+#k-fold validation - 5-fold validation, use kappa as metric
+fitControl <- trainControl(method = "cv", number = 5)
+
+library(gbm)
+
+gbmFit <- train(classe~., data=training, method="gbm", metric="Kappa", trControl=fitControl, verbose=FALSE)
+
+rfFit <- train(classe~.,data=training,method="rf", metric="Kappa", trControl=fitControl)
+
+library(lattice)
+algoComp <- resamples(list(rf=rfFit,gbm=gbmFit))
+summary(algoComp)
+
+````
+````
+Call:
+summary.resamples(object = algoComp)
+
+Models: rf, gbm 
+Number of resamples: 5 
+
+Accuracy 
+      Min. 1st Qu. Median   Mean 3rd Qu.   Max. NA's
+rf  0.9869  0.9891 0.9898 0.9902  0.9924 0.9927    0
+gbm 0.9359  0.9396 0.9411 0.9411  0.9429 0.9461    0
+
+Kappa 
+      Min. 1st Qu. Median   Mean 3rd Qu.   Max. NA's
+rf  0.9834  0.9862 0.9871 0.9876  0.9903 0.9908    0
+gbm 0.9189  0.9236 0.9254 0.9255  0.9277 0.9318    0  
+````
+
+#### Accuracy on training set and cross validation set
+Following the computation on the accuracy for the training data run through the Random Forest Algorithm  and cross validation set
+
+Training set:
+````{r, eval=FALSE}
+trainingPred <- predict(rfFit, training)
+confusionMatrix(trainingPred, training$classe)
+````
+````
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    A    B    C    D    E
+         A 3906    0    0    0    0
+         B    0 2658    0    0    0
+         C    0    0 2396    0    0
+         D    0    0    0 2252    0
+         E    0    0    0    0 2525
+
+Overall Statistics
+                                     
+               Accuracy : 1          
+                 95% CI : (0.9997, 1)
+    No Information Rate : 0.2843     
+    P-Value [Acc > NIR] : < 2.2e-16  
+                                     
+                  Kappa : 1          
+ Mcnemar's Test P-Value : NA         
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E
+Sensitivity            1.0000   1.0000   1.0000   1.0000   1.0000
+Specificity            1.0000   1.0000   1.0000   1.0000   1.0000
+Pos Pred Value         1.0000   1.0000   1.0000   1.0000   1.0000
+Neg Pred Value         1.0000   1.0000   1.0000   1.0000   1.0000
+Prevalence             0.2843   0.1935   0.1744   0.1639   0.1838
+Detection Rate         0.2843   0.1935   0.1744   0.1639   0.1838
+Detection Prevalence   0.2843   0.1935   0.1744   0.1639   0.1838
+Balanced Accuracy      1.0000   1.0000   1.0000   1.0000   1.0000
+````
+
+Cross validation set
+````{r, eval=FALSE}
+crossValPred <- predict(rfFit, testing)
+confusionMatrix(crossValPred, testing$classe)
+````
+````
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    A    B    C    D    E
+         A 1673    5    0    0    0
+         B    1 1128    4    0    0
+         C    0    5 1015    7    0
+         D    0    0    7  957    2
+         E    0    1    0    0 1080
+
+Overall Statistics
+                                          
+               Accuracy : 0.9946          
+                 95% CI : (0.9923, 0.9963)
+    No Information Rate : 0.2845          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.9931          
+ Mcnemar's Test P-Value : NA              
+
+Statistics by Class:
+
+                     Class: A Class: B Class: C Class: D Class: E
+Sensitivity            0.9994   0.9903   0.9893   0.9927   0.9982
+Specificity            0.9988   0.9989   0.9975   0.9982   0.9998
+Pos Pred Value         0.9970   0.9956   0.9883   0.9907   0.9991
+Neg Pred Value         0.9998   0.9977   0.9977   0.9986   0.9996
+Prevalence             0.2845   0.1935   0.1743   0.1638   0.1839
+Detection Rate         0.2843   0.1917   0.1725   0.1626   0.1835
+Detection Prevalence   0.2851   0.1925   0.1745   0.1641   0.1837
+Balanced Accuracy      0.9991   0.9946   0.9934   0.9955   0.9990
+````
+
+#### Predictions with the downloaded test set
+Now that we have a trained model, we can attempt to predict the classes from the trained modeling using the test set
+````{r, eval=FALSE}
+classPred <- predict(rfFit, testPred)
+classPred
+````
+````
+ [1] B A B A A E D B A A B C B A E E A B B B
+Levels: A B C D E
+````
